@@ -12,8 +12,12 @@ var connectionString =
         "Connection string 'DefaultConnection' not found.");
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(connectionString));
-
+    options.UseSqlServer(
+        connectionString,
+        sqlOptions =>
+        {
+            sqlOptions.EnableRetryOnFailure();
+        }));
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
