@@ -10,7 +10,7 @@ namespace TaskApi.Controllers;
 public class TasksController : ControllerBase
 {
     private readonly AppDbContext _context;
-
+    public string Something = NIEISTNIEJACA_ZMIENNA;
     public TasksController(AppDbContext context)
     {
         _context = context;
