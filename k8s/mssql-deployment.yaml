@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: sqlserver
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: sqlserver
+
+  template:
+    metadata:
+      labels:
+        app: sqlserver
+
+    spec:
+      containers:
+        - name: sqlserver
+
+          image: mcr.microsoft.com/mssql/server:2022-latest
+
+          ports:
+            - containerPort: 1433
+
+          env:
+            - name: ACCEPT_EULA
+              value: "Y"
+
+            - name: MSSQL_PID
+              value: "Developer"
+
+            - name: MSSQL_SA_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: taskapi-secrets
+                  key: MSSQL_SA_PASSWORD
+
+          volumeMounts:
+            - name: mssql-storage
+              mountPath: /var/opt/mssql
+
+          readinessProbe:
+            tcpSocket:
+              port: 1433
+            initialDelaySeconds: 15
+            periodSeconds: 5
+
+      volumes:
+        - name: mssql-storage
+          persistentVolumeClaim:
+            claimName: mssql-data
