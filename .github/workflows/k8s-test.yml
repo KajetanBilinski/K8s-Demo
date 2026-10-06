@@ -1,0 +1,148 @@
+name: Kubernetes Test
+
+on:
+  pull_request:
+    branches:
+      - master
+
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+env:
+  TEST_DB_PASSWORD: "K8sDemo_Test_123!"
+
+jobs:
+  k8s-test:
+    name: Kubernetes Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v5.1.0
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Create Kubernetes cluster
+        run: |
+          kind create cluster \
+            --name taskapi-ci \
+            --wait 120s
+
+      - name: Show cluster info
+        run: |
+          kubectl cluster-info
+          kubectl get nodes
+          kubectl get storageclass
+
+      - name: Build API Docker image
+        run: |
+          docker build \
+            -f src/TaskApi/Dockerfile \
+            -t taskapi:ci-${GITHUB_SHA} \
+            .
+
+      - name: Load image into kind
+        run: |
+          kind load docker-image \
+            taskapi:ci-${GITHUB_SHA} \
+            --name taskapi-ci
+
+      - name: Create Kubernetes secrets
+        run: |
+          kubectl create secret generic taskapi-secrets \
+            --from-literal=MSSQL_SA_PASSWORD="${TEST_DB_PASSWORD}" \
+            --from-literal=ConnectionStrings__DefaultConnection="Server=sqlserver,1433;Database=TasksDb;User Id=sa;Password=${TEST_DB_PASSWORD};TrustServerCertificate=True"
+
+      - name: Deploy SQL Server
+        run: |
+          kubectl apply -f k8s/mssql-pvc.yaml
+          kubectl apply -f k8s/mssql-service.yaml
+          kubectl apply -f k8s/mssql-deployment.yaml
+
+      - name: Wait for SQL Server
+        run: |
+          kubectl rollout status deployment/sqlserver --timeout=180s
+
+      - name: Deploy API Service
+        run: |
+          kubectl apply -f k8s/api-service.yaml
+
+      - name: Prepare CI API Deployment
+        run: |
+          cp k8s/api-deployment.yaml /tmp/api-deployment.yaml
+
+          sed -i \
+            "s#image: .*#image: taskapi:ci-${GITHUB_SHA}#" \
+            /tmp/api-deployment.yaml
+
+          cat /tmp/api-deployment.yaml
+
+      - name: Deploy API
+        run: |
+          kubectl apply -f /tmp/api-deployment.yaml
+
+      - name: Wait for API rollout
+        run: |
+          kubectl rollout status deployment/taskapi --timeout=180s
+
+      - name: Show Kubernetes resources
+        run: |
+          kubectl get pods -o wide
+          kubectl get deployments
+          kubectl get services
+          kubectl get pvc
+
+      - name: Test health endpoint
+        run: |
+          kubectl port-forward service/taskapi 8080:8080 \
+            > /tmp/port-forward.log 2>&1 &
+
+          PORT_FORWARD_PID=$!
+
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:8080/health; then
+              echo
+              echo "Kubernetes health check passed"
+              kill $PORT_FORWARD_PID || true
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Health check failed"
+          cat /tmp/port-forward.log
+          kill $PORT_FORWARD_PID || true
+          exit 1
+
+      - name: Kubernetes diagnostics
+        if: failure()
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -o wide || true
+
+          echo "=== Deployments ==="
+          kubectl get deployments || true
+
+          echo "=== PVC ==="
+          kubectl get pvc || true
+
+          echo "=== TaskApi ==="
+          kubectl describe deployment taskapi || true
+          kubectl logs deployment/taskapi --tail=100 || true
+
+          echo "=== SQL Server ==="
+          kubectl describe deployment sqlserver || true
+          kubectl logs deployment/sqlserver --tail=100 || true

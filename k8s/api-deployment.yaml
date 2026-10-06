@@ -20,7 +20,7 @@ spec:
       containers:
         - name: taskapi
 
-          image: ghcr.io/kajetanbilinski/k8s-demo:latest
+          image: ghcr.io/kajetanbilinski/k8s-demo:sha-2865afff6e7412c671ce8c4d0369a6f83bcd4751
           imagePullPolicy: IfNotPresent
 
           ports:
